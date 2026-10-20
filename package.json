@@ -1,16 +1,17 @@
 {
   "name": "pixconvert",
   "private": true,
-  "version": "0.1.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "test": "node --test tests/timeline.test.ts",
     "tauri": "tauri"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-dialog": "^2.7.3",
     "@tauri-apps/plugin-opener": "^2.0.0"
   },
@@ -20,7 +21,7 @@
     "vite": "^8.0.16"
   },
   "allowScripts": {
-    "@tauri-apps/api@2.11.1": true,
+    "@tauri-apps/api@2.12.4": true,
     "vite-plugin-tauri@4.0.0": true
   }
 }

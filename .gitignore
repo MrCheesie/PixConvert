@@ -22,3 +22,33 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+# Default
+.DS_Store
+_MACOSX
+tmp/
+.env
+*~
+$RECYCLE.BIN/
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+*.lnk
+.directory
+.directory/
+Trash-*/
+.fuse_hidden*
+.nox/
+
+# npm
+dist/
+.dist/
+node_modules/
+.node_modules/
+.astro
+
+# Rust
+target/
+/target
+agent/

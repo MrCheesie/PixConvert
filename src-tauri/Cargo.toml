@@ -1,8 +1,8 @@
 [package]
 name = "pixconvert"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+version = "2.0.0"
+description = "PixConvert — local-first image, video, audio and document converter"
+authors = ["Alris"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -18,13 +18,43 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+image = { version = "0.25", features = ["default-formats", "avif"] }
+imageproc = "0.25"
+ab_glyph = "0.2"
+# 0.6 rewrote the decode API (AudioDecoderOptions, no SampleBuffer); 0.5 is the
+# stable API we build against. See agent/docs/audio.md.
+symphonia = { version = "0.5", features = ["all"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+tar = "0.4"
+flate2 = "1"
+
+# --- Feature-gated native codecs (see agent/docs/image.md §exotic formats) ---
+# These are compiled only when the matching feature is enabled. The default
+# build routes HEIC/JXL through ffmpeg instead, so a missing crate can never
+# break the normal build.
+vtracer = { version = "0.6", optional = true }
+zune-heic = { version = "0.5", optional = true }
+jxl = { version = "0.8", optional = true }
+
+[dev-dependencies]
+# `test` unlocks tauri::test::mock_app so the command modules can be exercised
+# without a window. Integration tests live in tests/.
+tauri = { version = "2", features = ["test", "protocol-asset"] }
 image = "0.25"
 
+[features]
+default = []
+vectorize = ["dep:vtracer"]
+heic-native = ["dep:zune-heic"]
+jxl-native = ["dep:jxl"]
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

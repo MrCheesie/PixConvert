@@ -5,30 +5,54 @@
     <link rel="stylesheet" href="/src/styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PixConvert</title>
-    <script type="module" src="/src/main.ts" defer></script>
+    <script type="module" src="/src/main.ts"></script>
   </head>
 
   <body>
-      <div>
-          <h1>
-              Drop a file here
-          </h1>
-          <div id="dropZone">
-            <span class="drop-zone__prompt">Drag & drop files here or click to upload</span>
-            <!-- Hidden input field to handle the underlying file selection -->
-            <input type="file" name="myFiles" id="fileInput" class="drop-zone__input" multiple>
+    <div class="app">
+      <header class="app-header">
+        <div class="brand">
+          <span class="brand__mark">PC</span>
+          <div class="brand__text">
+            <h1 class="brand__title">PixConvert</h1>
+            <p class="brand__meta">v2.0.0 · local-first · no uploads</p>
           </div>
+        </div>
 
-          <div id="fileList" class="file-list"></div>
+        <nav class="tabs" id="tabBar" role="tablist" aria-label="Studios">
+          <button class="tabs__tab is-active" type="button" role="tab" data-studio="image">
+            Image
+          </button>
+          <button class="tabs__tab" type="button" role="tab" data-studio="video">
+            Video
+          </button>
+          <button class="tabs__tab" type="button" role="tab" data-studio="audio">
+            Audio
+          </button>
+          <button class="tabs__tab" type="button" role="tab" data-studio="doc">
+            Doc
+          </button>
+        </nav>
+      </header>
 
-          <label for="formatSelect">Select format to convert to</label>
-          <select name="fileChooser" id="formatSelect">
-              <option title="Best for lossless, transparent images, great for digital use." value="png">PNG</option>
-              <option title="Best for images in websites." value="webp">WebP</option>
-              <option title="Best for photos taken with a camera." value="jpeg">JPEG</option>
-              <option title="Pronounced like the 'gif' in gift." value="gif">GIF </option>
-          </select>
-          <button id="convertBtn">Convert</button>
-      </div>
+      <p class="notice" id="browserNotice" hidden>
+        Browser preview: the Rust backend is unavailable, so conversion buttons are
+        disabled. Run <code>npm run tauri dev</code> for the full app.
+      </p>
+
+      <main class="app-main">
+        <aside class="sidebar">
+          <div id="dropZoneHost"></div>
+          <div id="fileListHost"></div>
+          <p class="sidebar__hint">
+            Inputs are never modified. Results are written next to the source as
+            <code>*_converted_by_alris.ext</code>,
+            <code>*_compressed_by_alris.ext</code> or <code>*_edited_by_alris.ext</code>.
+          </p>
+        </aside>
+
+        <div id="studioContainer" class="content"></div>
+      </main>
+    </div>
   </body>
 </html>
