@@ -38,7 +38,7 @@ pub fn audio_codec_args(format: &str) -> Result<Vec<String>, String> {
     Ok(vec!["-c:a".into(), codec.to_string()])
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn convert_audio<R: Runtime>(
     app: AppHandle<R>,
     input_path: String,
@@ -65,7 +65,7 @@ pub fn convert_audio<R: Runtime>(
     Ok(done_message("Converted", &out))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn compress_audio<R: Runtime>(
     app: AppHandle<R>,
     input_path: String,
@@ -128,7 +128,7 @@ pub struct AudioEditOps {
     pub mix_path: Option<String>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn edit_audio<R: Runtime>(
     app: AppHandle<R>,
     input_path: String,
@@ -237,7 +237,7 @@ fn audio_filter_chain(ops: &AudioEditOps) -> String {
 /// Decode the whole file and reduce it to [`PEAK_BUCKETS`] peak amplitudes.
 ///
 /// Returns values in `0.0..=1.0` — the frontend draws them as a bar chart.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn audio_waveform(input_path: String) -> Result<Vec<f32>, String> {
     use symphonia::core::audio::SampleBuffer;
     use symphonia::core::codecs::DecoderOptions;

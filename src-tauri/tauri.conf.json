@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "PixConvert",
-  "version": "2.0.0",
+  "version": "0.2.1",
   "identifier": "com.alris.pixconvert",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -31,6 +31,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "copyright": "Copyright © 2026 Alris Dhanwani",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

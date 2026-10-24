@@ -38,7 +38,7 @@ pub const NATIVE_OUTPUT_FORMATS: &[&str] = &[
 
 // --------------------------------------------------------------- conversion --
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn convert_image<R: Runtime>(
     app: AppHandle<R>,
     input_path: String,
@@ -56,7 +56,7 @@ pub fn convert_image<R: Runtime>(
     Ok(format!("Converted: {} ({} bytes)", out.display(), size_of(&out)))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn compress_image<R: Runtime>(
     app: AppHandle<R>,
     input_path: String,
@@ -177,7 +177,7 @@ pub struct ImageEditOps {
 }
 
 /// Apply order is fixed: resize → crop → rotate → flip → filters → text.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn edit_image<R: Runtime>(
     app: AppHandle<R>,
     input_path: String,
@@ -409,7 +409,7 @@ fn resolve_font(explicit: Option<&str>) -> Result<Vec<u8>, String> {
 
 // ------------------------------------------------------------ vectorization --
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vectorize_image(
     input_path: String,
     output_path: Option<String>,
@@ -445,7 +445,7 @@ pub struct BatchResult {
     pub error: Option<String>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn batch_convert<R: Runtime>(
     app: AppHandle<R>,
     inputs: Vec<String>,
@@ -486,7 +486,7 @@ pub fn batch_convert<R: Runtime>(
     Ok(results)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn batch_compress<R: Runtime>(
     app: AppHandle<R>,
     inputs: Vec<String>,

@@ -19,7 +19,7 @@ const AUDIO_FORMATS: &[&str] = &["mp3", "aac", "m4a", "wav", "flac", "ogg", "opu
 
 // --------------------------------------------------------------- conversion --
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn convert_video<R: Runtime>(
     app: AppHandle<R>,
     input_path: String,
@@ -123,7 +123,7 @@ fn video_codec_args(format: &str, quality: Option<u8>) -> Vec<String> {
 
 // ------------------------------------------------------------- compression --
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn compress_video<R: Runtime>(
     app: AppHandle<R>,
     input_path: String,
@@ -241,7 +241,7 @@ pub struct VideoEditOps {
     pub audio_path: Option<String>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn edit_video<R: Runtime>(
     app: AppHandle<R>,
     input_path: String,
@@ -435,7 +435,7 @@ fn even(value: u32) -> u32 {
 
 // ------------------------------------------------- video -> audio / -> gif --
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn video_to_audio<R: Runtime>(
     app: AppHandle<R>,
     input_path: String,
@@ -459,7 +459,7 @@ pub fn video_to_audio<R: Runtime>(
     Ok(done_message("Extracted audio", &out))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn video_to_gif<R: Runtime>(
     app: AppHandle<R>,
     input_path: String,

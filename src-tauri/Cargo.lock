@@ -3391,7 +3391,7 @@ dependencies = [
 
 [[package]]
 name = "pixconvert"
-version = "2.0.0"
+version = "0.2.1"
 dependencies = [
  "ab_glyph",
  "flate2",

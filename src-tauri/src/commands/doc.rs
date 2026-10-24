@@ -55,7 +55,7 @@ fn find_pdf_engine() -> Option<&'static str> {
     PDF_ENGINES.iter().copied().find(|name| find_on_path(name).is_some())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn convert_doc<R: Runtime>(
     app: AppHandle<R>,
     input_path: String,
@@ -85,13 +85,13 @@ pub fn convert_doc<R: Runtime>(
     Ok(done_message("Converted", &out))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn doc_to_pdf<R: Runtime>(app: AppHandle<R>, input_path: String) -> Result<String, String> {
     convert_doc(app, input_path, "pdf".to_string())
 }
 
 /// Shrink a PDF with ghostscript. Returns a readable error when gs is absent.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn compress_doc<R: Runtime>(app: AppHandle<R>, input_path: String) -> Result<String, String> {
     let input = PathBuf::from(&input_path);
     validate_input(&input)?;

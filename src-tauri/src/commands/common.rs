@@ -8,23 +8,21 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::find_on_path;
 
-/// Download URLs for the portable builds we know how to unpack.
-#[cfg(target_os = "macos")]
-const FFMPEG_URL: &str = "https://evermeet.cx/ffmpeg/getrelease/zip";
-#[cfg(target_os = "windows")]
-const FFMPEG_URL: &str = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const FFMPEG_URL: &str =
-    "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz";
-#[cfg(all(target_os = "linux", not(target_arch = "x86_64")))]
-const FFMPEG_URL: &str =
-    "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz";
+/// Download sources for the portable builds we know how to unpack.
+///
+/// ffmpeg comes from the `ffmpeg-static` release assets, which publish both
+/// `ffmpeg-<platform>.gz` and `ffprobe-<platform>.gz` (the timeline needs the
+/// probe binary too). The previous macOS source (evermeet.cx) was retired
+/// upstream and now answers `410 Gone`, so no platform uses it any more.
+const FFMPEG_STATIC_RELEASE_API: &str =
+    "https://api.github.com/repos/eugeneware/ffmpeg-static/releases/latest";
 
 const PANDOC_RELEASE_API: &str = "https://api.github.com/repos/jgm/pandoc/releases/latest";
 
@@ -50,7 +48,7 @@ pub struct ProgressPayload {
 }
 
 /// Report what is available without triggering any download.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn detect_tools<R: Runtime>(app: AppHandle<R>) -> ToolStatus {
     let locate = |name: &str| -> Option<String> {
         find_on_path(name)
@@ -64,7 +62,11 @@ pub fn detect_tools<R: Runtime>(app: AppHandle<R>) -> ToolStatus {
 }
 
 /// Download (or reuse) a tool and return its absolute path.
-#[tauri::command]
+///
+/// `async` matters: a synchronous Tauri command runs on the main thread, so the
+/// blocking HTTP download below would freeze the window (the macOS "spinning
+/// beach ball") for as long as the transfer takes.
+#[tauri::command(async)]
 pub fn ensure_tool<R: Runtime>(app: AppHandle<R>, name: String) -> Result<String, String> {
     resolve_tool(&app, &name).map(|p| p.display().to_string())
 }
@@ -94,27 +96,151 @@ fn tools_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn cached_tool_path<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<PathBuf, String> {
-    let file = if cfg!(windows) {
+fn exe_name(name: &str) -> String {
+    if cfg!(windows) {
         format!("{}.exe", name)
     } else {
         name.to_string()
-    };
-    Ok(tools_dir(app)?.join(file))
+    }
+}
+
+fn cached_tool_path<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<PathBuf, String> {
+    Ok(tools_dir(app)?.join(exe_name(name)))
 }
 
 // ---------------------------------------------------------------- downloads --
 
 fn download_tool<R: Runtime>(app: &AppHandle<R>, name: &str, target: &Path) -> Result<(), String> {
-    let (url, archive_ext) = download_url_for(name)?;
     let dir = tools_dir(app)?;
-    let archive = dir.join(format!("{}-download.{}", name, archive_ext));
+    match name {
+        "ffmpeg" => install_ffmpeg(app, &dir),
+        "pandoc" => install_pandoc(app, &dir, target),
+        other => Err(format!("No download source known for tool '{}'", other)),
+    }
+}
 
-    emit_progress(app, name, 0, 0);
-    download_file(app, name, &url, &archive).map_err(|e| {
+/// `<platform>` suffix used by the ffmpeg-static release assets.
+fn ffmpeg_platform() -> Option<&'static str> {
+    #[cfg(target_os = "macos")]
+    {
+        if cfg!(target_arch = "aarch64") {
+            return Some("darwin-arm64");
+        }
+        if cfg!(target_arch = "x86_64") {
+            return Some("darwin-x64");
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if cfg!(target_arch = "x86_64") {
+            return Some("linux-x64");
+        }
+        if cfg!(target_arch = "aarch64") {
+            return Some("linux-arm64");
+        }
+        if cfg!(target_arch = "arm") {
+            return Some("linux-arm");
+        }
+        if cfg!(target_arch = "x86") {
+            return Some("linux-ia32");
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if cfg!(target_arch = "x86_64") {
+            return Some("win32-x64");
+        }
+    }
+    None
+}
+
+/// Download `ffmpeg` (and its `ffprobe` companion) as gzipped static binaries.
+pub fn install_ffmpeg<R: Runtime>(app: &AppHandle<R>, dir: &Path) -> Result<(), String> {
+    let platform = ffmpeg_platform().ok_or_else(|| {
+        "Automatic ffmpeg download is not available for this platform. Install ffmpeg manually and put it on your PATH."
+            .to_string()
+    })?;
+
+    emit_progress(app, "ffmpeg", 0, 0);
+    for (tool, url) in ffmpeg_static_assets(platform)? {
+        let target = dir.join(exe_name(&tool));
+        let archive = dir.join(format!("{}-download.gz", tool));
+
+        download_file(app, &tool, &url, &archive).map_err(|e| {
+            format!(
+                "Could not download {} from {}: {}\nDownload it manually and put it on your PATH.",
+                tool, url, e
+            )
+        })?;
+        gunzip(&archive, &target)?;
+        let _ = fs::remove_file(&archive);
+        make_executable(&target)?;
+    }
+    Ok(())
+}
+
+/// Ask the ffmpeg-static release for the asset URLs of this platform.
+fn ffmpeg_static_assets(platform: &str) -> Result<Vec<(String, String)>, String> {
+    let body = http_client()?
+        .get(FFMPEG_STATIC_RELEASE_API)
+        .send()
+        .and_then(|r| r.error_for_status())
+        .and_then(|r| r.text())
+        .map_err(|e| format!("Could not query the ffmpeg download list: {}", e))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("Bad ffmpeg release JSON: {}", e))?;
+    let assets = json
+        .get("assets")
+        .and_then(|a| a.as_array())
+        .ok_or_else(|| "The ffmpeg release JSON had no assets.".to_string())?;
+
+    let mut found: Vec<(String, String)> = Vec::new();
+    for tool in ["ffmpeg", "ffprobe"] {
+        let wanted = format!("{}-{}.gz", tool, platform);
+        let url = assets.iter().find_map(|asset| {
+            let name = asset.get("name").and_then(|n| n.as_str())?;
+            if name != wanted {
+                return None;
+            }
+            asset
+                .get("browser_download_url")
+                .and_then(|u| u.as_str())
+                .map(str::to_string)
+        });
+        match url {
+            Some(url) => found.push((tool.to_string(), url)),
+            // ffmpeg alone still converts; only the timeline needs ffprobe.
+            None if tool == "ffprobe" => {}
+            None => {
+                return Err(format!(
+                    "The ffmpeg release has no asset named '{}'. Install ffmpeg manually.",
+                    wanted
+                ))
+            }
+        }
+    }
+    Ok(found)
+}
+
+fn gunzip(archive: &Path, target: &Path) -> Result<(), String> {
+    let file = File::open(archive).map_err(|e| format!("Cannot open {}: {}", archive.display(), e))?;
+    let mut decoder = flate2::read::GzDecoder::new(file);
+    let mut out = File::create(target).map_err(|e| format!("Cannot write {}: {}", target.display(), e))?;
+    std::io::copy(&mut decoder, &mut out).map_err(|e| format!("Cannot unpack {}: {}", archive.display(), e))?;
+    out.flush().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Download pandoc's release archive and move the binary into the cache.
+fn install_pandoc<R: Runtime>(app: &AppHandle<R>, dir: &Path, target: &Path) -> Result<(), String> {
+    let (url, archive_ext) = pandoc_download_url()?;
+    let archive = dir.join(format!("pandoc-download.{}", archive_ext));
+
+    emit_progress(app, "pandoc", 0, 0);
+    download_file(app, "pandoc", &url, &archive).map_err(|e| {
         format!(
-            "Could not download {} from {}: {}\nDownload it manually and put it on your PATH.",
-            name, url, e
+            "Could not download pandoc from {}: {}\nDownload it manually and put it on your PATH.",
+            url, e
         )
     })?;
 
@@ -124,49 +250,30 @@ fn download_tool<R: Runtime>(app: &AppHandle<R>, name: &str, target: &Path) -> R
             .arg("-xf")
             .arg(&archive)
             .arg("-C")
-            .arg(&dir)
+            .arg(dir)
             .status()
             .map_err(|e| format!("Failed to run tar: {}", e))?;
         if !status.success() {
             return Err("Failed to extract the downloaded archive with tar.".to_string());
         }
     } else {
-        extract_zip(&archive, &dir)?;
+        extract_zip(&archive, dir)?;
     }
 
-    let found = find_binary(&dir, name).ok_or_else(|| {
-        format!(
-            "Downloaded archive for {} did not contain the binary. Install it manually.",
-            name
-        )
+    let found = find_binary(dir, "pandoc").ok_or_else(|| {
+        "Downloaded archive for pandoc did not contain the binary. Install it manually.".to_string()
     })?;
 
     if found != target {
         fs::rename(&found, target).or_else(|_| {
             fs::copy(&found, target)
                 .map(|_| ())
-                .map_err(|e| format!("Cannot move {} into the tools dir: {}", name, e))
+                .map_err(|e| format!("Cannot move pandoc into the tools dir: {}", e))
         })?;
     }
     make_executable(target)?;
     let _ = fs::remove_file(&archive);
     Ok(())
-}
-
-fn download_url_for(name: &str) -> Result<(String, String), String> {
-    match name {
-        "ffmpeg" => {
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
-            let ext = "zip";
-            #[cfg(target_os = "linux")]
-            let ext = "tar.xz";
-            #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-            return Err("Automatic ffmpeg download is not supported on this platform.".to_string());
-            Ok((FFMPEG_URL.to_string(), ext.to_string()))
-        }
-        "pandoc" => pandoc_download_url(),
-        other => Err(format!("No download source known for tool '{}'", other)),
-    }
 }
 
 /// Pandoc renames its release assets between versions, so read the release JSON
@@ -235,8 +342,12 @@ fn pandoc_download_url() -> Result<(String, String), String> {
 }
 
 fn http_client() -> Result<reqwest::blocking::Client, String> {
+    // Without timeouts a stalled connection hangs the request (and the window)
+    // forever. 30 min total leaves room for a slow 20 MB download.
     reqwest::blocking::Client::builder()
-        .user_agent("PixConvert/2.0")
+        .user_agent("PixConvert/0.2.1")
+        .connect_timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(30 * 60))
         .build()
         .map_err(|e| format!("Cannot build HTTP client: {}", e))
 }
@@ -394,20 +505,25 @@ pub struct MediaInfo {
     pub channels: Option<u32>,
 }
 
-/// Locate `ffprobe` (PATH, then next to the resolved ffmpeg, then the cache).
+/// Locate `ffprobe` (PATH, cache, then next to the resolved ffmpeg).
 fn find_ffprobe<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     if let Some(path) = find_on_path("ffprobe") {
         return Some(path);
     }
+    if let Ok(cached) = cached_tool_path(app, "ffprobe") {
+        if cached.is_file() {
+            return Some(cached);
+        }
+    }
     let ffmpeg = resolve_tool(app, "ffmpeg").ok()?;
-    let sibling = ffmpeg.with_file_name(if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" });
+    let sibling = ffmpeg.with_file_name(exe_name("ffprobe"));
     sibling.is_file().then_some(sibling)
 }
 
 /// Read duration / stream details with ffprobe.
 ///
 /// The frontend uses this to draw the timeline for a single selected file.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn probe_media<R: Runtime>(app: AppHandle<R>, path: String) -> Result<MediaInfo, String> {
     let input = std::path::PathBuf::from(&path);
     super::validate_input(&input)?;
@@ -518,13 +634,13 @@ fn parse_ratio(value: &str) -> Option<f64> {
 // ------------------------------------------------------------ text file I/O --
 
 /// Read a UTF-8 text file (used by the doc editor).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_text_file(path: String) -> Result<String, String> {
     fs::read_to_string(&path).map_err(|e| format!("Cannot read {}: {}", path, e))
 }
 
 /// Write a UTF-8 text file. Does not create parent directories.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn write_text_file(path: String, contents: String) -> Result<String, String> {
     fs::write(&path, contents).map_err(|e| format!("Cannot write {}: {}", path, e))?;
     Ok(format!("Saved {}", path))
