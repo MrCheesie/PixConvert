@@ -1,6 +1,7 @@
 /** Phase 3 studio — audio conversion (ffmpeg) + waveform peaks (symphonia). */
 
 import { createFormatSelect } from '../../components/FormatSelect';
+import { runWithLoading } from '../../components/LoadingOverlay';
 import { createProgressBar } from '../../components/ProgressBar';
 import { createSubTabs } from '../../components/SubTabs';
 import { createTimeline } from '../../components/Timeline';
@@ -67,7 +68,9 @@ export function createAudioStudio(): Studio {
     const path = requireAudio(convertStatus);
     if (!path) return;
     try {
-      const message = await convertAudio(path, convertFormat.getValue(), convertBitrate.value);
+      const message = await runWithLoading(`Converting ${baseName(path)}`, () =>
+        convertAudio(path, convertFormat.getValue(), convertBitrate.value),
+      );
       setStatus(convertStatus, message, 'success');
     } catch (error) {
       setStatus(convertStatus, errorMessage(error), 'error');
@@ -93,7 +96,9 @@ export function createAudioStudio(): Studio {
     const path = requireAudio(compressStatus);
     if (!path) return;
     try {
-      const message = await compressAudio(path, compressFormat.getValue(), compressBitrate.value);
+      const message = await runWithLoading(`Compressing ${baseName(path)}`, () =>
+        compressAudio(path, compressFormat.getValue(), compressBitrate.value),
+      );
       setStatus(compressStatus, message, 'success');
     } catch (error) {
       setStatus(compressStatus, errorMessage(error), 'error');

@@ -322,9 +322,14 @@ fn video_pipeline_convert_compress_edit_extract_gif() {
     let webm = video::convert_video(app().clone(), clip.display().to_string(), "webm".into(), Some(70)).expect("mp4->webm");
     assert!(path_from(&webm).is_file());
 
-    let compressed = video::compress_video(app().clone(), clip.display().to_string(), "mp4".into(), 35, "veryfast".into())
+    let compressed = video::compress_video(app().clone(), clip.display().to_string(), "mp4".into(), 35, "veryfast".into(), None)
         .expect("compress video");
     assert!(path_from(&compressed).is_file());
+
+    // Low CPU mode must still produce a playable file, just with one thread.
+    let low_cpu = video::compress_video(app().clone(), clip.display().to_string(), "mp4".into(), 35, "veryfast".into(), Some(true))
+        .expect("compress video in low CPU mode");
+    assert!(path_from(&low_cpu).is_file());
 
     let audio_out = video::video_to_audio(app().clone(), clip.display().to_string(), "mp3".into(), Some("96k".into()))
         .expect("extract audio");

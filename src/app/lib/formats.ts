@@ -17,6 +17,7 @@ export const IMAGE_FORMATS: FormatOption[] = [
   format('bmp', 'BMP', 'Uncompressed bitmap; large but universal.'),
   format('tiff', 'TIFF', 'Lossless archival / print workflows.'),
   format('ico', 'ICO', 'Windows icons (max 256 x 256).'),
+  format('icns', 'ICNS', 'macOS icons (16-512 px, written as a multi-size family).'),
   format('qoi', 'QOI', 'Fast lossless format for tooling.'),
   format('heic', 'HEIC', 'Apple photos. Requires ffmpeg.'),
   format('jxl', 'JPEG XL', 'Modern lossless/lossy format. Requires ffmpeg.'),
@@ -68,7 +69,7 @@ export const DOC_FORMATS: FormatOption[] = [
 ];
 
 export const IMAGE_EXTENSIONS = [
-  'png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff', 'avif', 'ico', 'qoi', 'heic', 'heif', 'jxl',
+  'png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff', 'avif', 'ico', 'icns', 'qoi', 'heic', 'heif', 'jxl',
 ];
 
 export const VIDEO_EXTENSIONS = [

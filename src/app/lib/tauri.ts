@@ -7,6 +7,7 @@ import type {
   AudioEditOps,
   BatchResult,
   ImageEditOps,
+  JobProgressEvent,
   MediaInfo,
   ProgressEvent,
   ToolDownloadEvent,
@@ -48,6 +49,13 @@ export const vectorizeImage = (inputPath: string, outputPath?: string) =>
 export const batchConvert = (inputs: string[], outputFormat: string, quality?: number) =>
   invoke<BatchResult[]>('batch_convert', { inputs, outputFormat, quality });
 
+/** Cuts the subject out with Apple Vision; macOS 14+ only. */
+export const removeBackground = (inputPath: string, outputFormat?: string) =>
+  invoke<string>('remove_background', { inputPath, outputFormat });
+
+export const backgroundRemovalAvailable = () =>
+  invoke<boolean>('background_removal_available');
+
 export const batchCompress = (
   inputs: string[],
   outputFormat: string,
@@ -66,7 +74,8 @@ export const compressVideo = (
   outputFormat: string,
   crf: number,
   preset: string,
-) => invoke<string>('compress_video', { inputPath, outputFormat, crf, preset });
+  lowCpu = false,
+) => invoke<string>('compress_video', { inputPath, outputFormat, crf, preset, lowCpu });
 
 export const editVideo = (inputPath: string, ops: VideoEditOps, outputFormat?: string) =>
   invoke<string>('edit_video', { inputPath, ops, outputFormat });
@@ -113,10 +122,23 @@ export const probeMedia = (path: string) => invoke<MediaInfo>('probe_media', { p
 
 export const ensureTool = (name: string) => invoke<string>('ensure_tool', { name });
 
+/* ---------------------------------------------------- open with / files --- */
+
+/** Paths handed over by Finder / Explorer before the UI was listening. */
+export const takeOpenFiles = () => invoke<string[]>('take_open_files');
+
+export const onOpenFiles = (handler: (paths: string[]) => void): Promise<UnlistenFn> =>
+  listen<string[]>('pixconvert://open-files', (e) => handler(e.payload));
+
 /* -------------------------------------------------------------- events ----- */
 
 export const onProgress = (handler: (event: ProgressEvent) => void): Promise<UnlistenFn> =>
   listen<ProgressEvent>('pixconvert://progress', (e) => handler(e.payload));
+
+/** Live percentage for the file ffmpeg is encoding right now. */
+export const onJobProgress = (
+  handler: (event: JobProgressEvent) => void,
+): Promise<UnlistenFn> => listen<JobProgressEvent>('pixconvert://job-progress', (e) => handler(e.payload));
 
 export const onToolDownload = (
   handler: (event: ToolDownloadEvent) => void,

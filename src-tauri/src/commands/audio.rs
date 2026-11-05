@@ -55,13 +55,15 @@ pub fn convert_audio<R: Runtime>(
         "-i".to_string(),
         input.display().to_string(),
     ];
+    args.extend(super::common::progress_args());
     args.extend(audio_codec_args(&format)?);
     if let Some(rate) = bitrate.filter(|b| !b.trim().is_empty()) {
         args.extend(["-b:a".into(), rate]);
     }
     args.push(out.display().to_string());
 
-    run_tool_named(&app, "ffmpeg", &args)?;
+    let duration = super::common::probe_duration(&app, &input);
+    super::common::run_tool_named_with_progress(&app, "ffmpeg", &args, &input, duration)?;
     Ok(done_message("Converted", &out))
 }
 
@@ -87,13 +89,15 @@ pub fn compress_audio<R: Runtime>(
         "-i".to_string(),
         input.display().to_string(),
     ];
+    args.extend(super::common::progress_args());
     args.extend(audio_codec_args(&format)?);
     if is_lossy(&format) {
         args.extend(["-b:a".into(), bitrate]);
     }
     args.push(out.display().to_string());
 
-    run_tool_named(&app, "ffmpeg", &args)?;
+    let duration = super::common::probe_duration(&app, &input);
+    super::common::run_tool_named_with_progress(&app, "ffmpeg", &args, &input, duration)?;
     Ok(done_message("Compressed", &out))
 }
 

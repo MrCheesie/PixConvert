@@ -1,6 +1,7 @@
 /** Phase 2 studio — video, backed by ffmpeg. */
 
 import { createFormatSelect } from '../../components/FormatSelect';
+import { runWithLoading } from '../../components/LoadingOverlay';
 import { createProgressBar } from '../../components/ProgressBar';
 import { createQualitySlider } from '../../components/QualitySlider';
 import { createSubTabs } from '../../components/SubTabs';
@@ -57,11 +58,12 @@ export function createVideoStudio(): Studio {
     const guard = requireFile(convertStatus);
     if (!guard) return;
     try {
+      const format = convertFormat.getValue();
       setStatus(convertStatus, `Converting ${baseName(guard)}…`);
-      const message = await convertVideo(
-        guard,
-        convertFormat.getValue(),
-        convertQuality.getValue(),
+      const message = await runWithLoading(
+        `Converting ${baseName(guard)}`,
+        () => convertVideo(guard, format, convertQuality.getValue()),
+        format.toUpperCase(),
       );
       setStatus(convertStatus, message, 'success');
     } catch (error) {
@@ -83,12 +85,17 @@ export function createVideoStudio(): Studio {
     ],
     'medium',
   );
+  const lowCpu = toggle('Low CPU mode (one ffmpeg thread)');
   const compressButton = button('Compress', () => void runCompress());
   const compressStatus = statusLine();
 
   const compressPanel = panel([
     h('div', { class: 'grid grid--2' }, [compressFormat.element, field('Preset', preset)]),
     crf.element,
+    lowCpu.element,
+    h('p', { class: 'hint' }, [
+      'Low CPU mode restricts ffmpeg to a single thread: compression finishes later but leaves the rest of the machine free.',
+    ]),
     compressButton,
     compressStatus,
   ]);
@@ -97,7 +104,14 @@ export function createVideoStudio(): Studio {
     const guard = requireFile(compressStatus);
     if (!guard) return;
     try {
-      const message = await compressVideo(guard, compressFormat.getValue(), crf.getValue(), preset.value);
+      const format = compressFormat.getValue();
+      const lowCpuMode = lowCpu.input.checked;
+      setStatus(compressStatus, `Compressing ${baseName(guard)}…`);
+      const message = await runWithLoading(
+        `Compressing ${baseName(guard)}`,
+        () => compressVideo(guard, format, crf.getValue(), preset.value, lowCpuMode),
+        lowCpuMode ? 'Low CPU mode — one thread' : format.toUpperCase(),
+      );
       setStatus(compressStatus, message, 'success');
     } catch (error) {
       setStatus(compressStatus, errorMessage(error), 'error');

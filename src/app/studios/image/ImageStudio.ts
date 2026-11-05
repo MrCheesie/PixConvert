@@ -3,6 +3,7 @@
 import { createBatchQueue } from '../../components/BatchQueue';
 import { createComparisonSlider } from '../../components/ComparisonSlider';
 import { createFormatSelect } from '../../components/FormatSelect';
+import { runWithLoading } from '../../components/LoadingOverlay';
 import { createProgressBar } from '../../components/ProgressBar';
 import { createQualitySlider } from '../../components/QualitySlider';
 import { createSubTabs } from '../../components/SubTabs';
@@ -20,6 +21,7 @@ import {
 } from '../../lib/dom';
 import { IMAGE_EXTENSIONS, IMAGE_FORMATS, VECTOR_FORMAT } from '../../lib/formats';
 import {
+  backgroundRemovalAvailable,
   batchCompress,
   batchConvert,
   compressImage,
@@ -28,6 +30,7 @@ import {
   errorMessage,
   fileUrl,
   onProgress,
+  removeBackground,
   runningInTauri,
   vectorizeImage,
 } from '../../lib/tauri';
@@ -86,16 +89,21 @@ export function createImageStudio(): Studio {
 
     try {
       if (format === 'svg') {
-        const messages: string[] = [];
-        for (const path of paths) {
-          messages.push(await vectorizeImage(path));
-        }
+        const messages = await runWithLoading(`Vectorizing ${paths.length} image(s)`, async () => {
+          const lines: string[] = [];
+          for (const path of paths) {
+            lines.push(await vectorizeImage(path));
+          }
+          return lines;
+        });
         setStatus(convertStatus, messages.join('\n'), 'success');
         return;
       }
 
       if (convertBatch.input.checked) {
-        const results = await batchConvert(paths, format, quality);
+        const results = await runWithLoading(`Converting ${paths.length} images`, () =>
+          batchConvert(paths, format, quality),
+        );
         convertResults.render(results);
         const failures = results.filter((result) => result.error !== null).length;
         setStatus(
@@ -108,7 +116,11 @@ export function createImageStudio(): Studio {
 
       const path = paths[0];
       setStatus(convertStatus, `Converting ${baseName(path)}…`);
-      const message = await convertImage(path, format, quality);
+      const message = await runWithLoading(
+        `Converting ${baseName(path)}`,
+        () => convertImage(path, format, quality),
+        format.toUpperCase(),
+      );
       setStatus(convertStatus, message, 'success');
       compare.setImages(fileUrl(path), fileUrl(outputPathFrom(message, path, format, 'converted')));
     } catch (error) {
@@ -156,7 +168,9 @@ export function createImageStudio(): Studio {
 
     try {
       if (compressBatch.input.checked) {
-        const results = await batchCompress(paths, format, quality, width, height);
+        const results = await runWithLoading(`Compressing ${paths.length} images`, () =>
+          batchCompress(paths, format, quality, width, height),
+        );
         compressResults.render(results);
         const failures = results.filter((result) => result.error !== null).length;
         setStatus(
@@ -166,7 +180,12 @@ export function createImageStudio(): Studio {
         );
         return;
       }
-      const message = await compressImage(paths[0], format, quality, width, height);
+      setStatus(compressStatus, `Compressing ${baseName(paths[0])}…`);
+      const message = await runWithLoading(
+        `Compressing ${baseName(paths[0])}`,
+        () => compressImage(paths[0], format, quality, width, height),
+        format.toUpperCase(),
+      );
       setStatus(compressStatus, message, 'success');
     } catch (error) {
       setStatus(compressStatus, errorMessage(error), 'error');
@@ -222,6 +241,49 @@ export function createImageStudio(): Studio {
   const editStatus = statusLine();
   const editCompare = createComparisonSlider();
 
+  /* ---------------------------------------------------- background cut --- */
+  const bgButton = button('Remove background', () => void runRemoveBackground(), 'secondary');
+  const bgStatus = statusLine();
+  const bgField = h('fieldset', { class: 'fieldset', id: 'bgRemovalField', hidden: true }, [
+    h('legend', {}, ['Background removal']),
+    h('p', { class: 'hint' }, [
+      'Cuts the subject out on-device with Apple Vision (macOS 14+) and writes ',
+      '<stem>_nobg_by_alris.png with a transparent background. No upload, no model download.',
+    ]),
+    bgButton,
+    bgStatus,
+  ]);
+
+  void backgroundRemovalAvailable()
+    .then((available) => {
+      bgField.hidden = !available;
+    })
+    .catch(() => {
+      bgField.hidden = true;
+    });
+
+  async function runRemoveBackground(): Promise<void> {
+    if (!runningInTauri()) {
+      setStatus(bgStatus, 'The backend only runs inside Tauri — use `npm run tauri dev`.', 'error');
+      return;
+    }
+    const paths = pathsWithExtensions(IMAGE_EXTENSIONS);
+    if (paths.length === 0) {
+      setStatus(bgStatus, 'Select an image first.', 'error');
+      return;
+    }
+
+    const path = paths[0];
+    setStatus(bgStatus, `Cutting out ${baseName(path)}…`);
+    try {
+      const message = await removeBackground(path, 'png');
+      setStatus(bgStatus, message, 'success');
+      editCompare.setImages(fileUrl(path), fileUrl(outputPathFrom(message, path, 'png', 'nobg')));
+    } catch (error) {
+      setStatus(bgStatus, errorMessage(error), 'error');
+    }
+  }
+
   const editPanel = panel([
     editFormat.element,
     h('fieldset', { class: 'fieldset' }, [
@@ -269,6 +331,7 @@ export function createImageStudio(): Studio {
       ]),
       field('Font file (.ttf)', textFont, 'Leave empty to use a system font'),
     ]),
+    bgField,
     applyButton,
     editStatus,
     editCompare.element,
@@ -381,7 +444,7 @@ function outputPathFrom(
   message: string,
   inputPath: string,
   format: string,
-  op: 'converted' | 'edited' | 'compressed',
+  op: 'converted' | 'edited' | 'compressed' | 'nobg',
 ): string {
   // Backend replies are always `"<verb>: <path> (<details>)"`.
   const match = message.match(/: (.+?)\s*\(/);

@@ -1,12 +1,15 @@
 /** PixConvert bootstrap: mounts the router, the About panel and reports browser-mode limits. */
 
 import { mountAbout } from './app/components/About';
+import { initOpenWith } from './app/openWith';
 import { initRouter } from './app/router';
 import { runningInTauri } from './app/lib/tauri';
 import { APP_VERSION } from './app/lib/version';
 
 function boot(): void {
   initRouter();
+  // Files opened from Finder/Explorer need the studios to exist first.
+  void initOpenWith();
 
   const aboutHost = document.getElementById('aboutHost');
   if (aboutHost) mountAbout(aboutHost);

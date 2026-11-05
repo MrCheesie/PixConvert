@@ -45,15 +45,13 @@ pub fn convert_video<R: Runtime>(
     }
 
     let out = output_path(&input, SUFFIX_CONVERT, &format)?;
-    let mut args = vec![
-        "-y".to_string(),
-        "-i".to_string(),
-        input.display().to_string(),
-    ];
+    let mut args = base_args(&input);
+    args.extend(super::common::progress_args());
     args.extend(video_codec_args(&format, quality));
     args.push(out.display().to_string());
 
-    run_tool_named(&app, "ffmpeg", &args)?;
+    let duration = super::common::probe_duration(&app, &input);
+    super::common::run_tool_named_with_progress(&app, "ffmpeg", &args, &input, duration)?;
     Ok(done_message("Converted", &out))
 }
 
@@ -130,6 +128,7 @@ pub fn compress_video<R: Runtime>(
     output_format: String,
     crf: u8,
     preset: String,
+    low_cpu: Option<bool>,
 ) -> Result<String, String> {
     let input = PathBuf::from(&input_path);
     validate_input(&input)?;
@@ -142,14 +141,35 @@ pub fn compress_video<R: Runtime>(
     };
 
     let out = output_path(&input, SUFFIX_COMPRESS, &format)?;
-    let mut args = base_args(&input);
+    let args = compress_video_args(&input, &format, crf, &preset, low_cpu.unwrap_or(false), &out);
+
+    let duration = super::common::probe_duration(&app, &input);
+    super::common::run_tool_named_with_progress(&app, "ffmpeg", &args, &input, duration)?;
+    Ok(done_message("Compressed", &out))
+}
+
+/// ffmpeg arguments for compression.
+///
+/// `low_cpu` pins the encoder to a single thread: the job takes longer but
+/// leaves the rest of the machine free, which is what a background compression
+/// should do.
+fn compress_video_args(
+    input: &std::path::Path,
+    format: &str,
+    crf: u8,
+    preset: &str,
+    low_cpu: bool,
+    out: &std::path::Path,
+) -> Vec<String> {
+    let mut args = base_args(input);
+    args.extend(super::common::progress_args());
     args.extend([
         "-c:v".into(),
         if format == "webm" { "libvpx-vp9" } else { "libx264" }.into(),
         "-crf".into(),
         crf.to_string(),
         "-preset".into(),
-        preset,
+        preset.to_string(),
         "-pix_fmt".into(),
         "yuv420p".into(),
         "-c:a".into(),
@@ -157,10 +177,11 @@ pub fn compress_video<R: Runtime>(
         "-b:a".into(),
         "128k".into(),
     ]);
+    if low_cpu {
+        args.extend(["-threads".into(), "1".into()]);
+    }
     args.push(out.display().to_string());
-
-    run_tool_named(&app, "ffmpeg", &args)?;
-    Ok(done_message("Compressed", &out))
+    args
 }
 
 // ------------------------------------------------------------------ editing --
@@ -448,6 +469,7 @@ pub fn video_to_audio<R: Runtime>(
 
     let out = output_path(&input, SUFFIX_CONVERT, &format)?;
     let mut args = base_args(&input);
+    args.extend(super::common::progress_args());
     args.extend(["-vn".into()]);
     args.extend(super::audio::audio_codec_args(&format)?);
     if let Some(rate) = bitrate.filter(|b| !b.trim().is_empty()) {
@@ -455,7 +477,8 @@ pub fn video_to_audio<R: Runtime>(
     }
     args.push(out.display().to_string());
 
-    run_tool_named(&app, "ffmpeg", &args)?;
+    let duration = super::common::probe_duration(&app, &input);
+    super::common::run_tool_named_with_progress(&app, "ffmpeg", &args, &input, duration)?;
     Ok(done_message("Extracted audio", &out))
 }
 
@@ -477,18 +500,22 @@ pub fn video_to_gif<R: Runtime>(
     }
     filters.push_str(",split[s0][s1];[s0]palettegen=max_colors=256[p];[s1][p]paletteuse=dither=bayer");
 
-    let args = vec![
+    let mut args = vec![
         "-y".to_string(),
         "-i".to_string(),
         input.display().to_string(),
+    ];
+    args.extend(super::common::progress_args());
+    args.extend([
         "-vf".to_string(),
         filters,
         "-loop".to_string(),
         "0".to_string(),
         out.display().to_string(),
-    ];
+    ]);
 
-    run_tool_named(&app, "ffmpeg", &args)?;
+    let duration = super::common::probe_duration(&app, &input);
+    super::common::run_tool_named_with_progress(&app, "ffmpeg", &args, &input, duration)?;
     Ok(done_message("Saved GIF", &out))
 }
 
@@ -505,4 +532,47 @@ fn base_args(input: &std::path::Path) -> Vec<String> {
 fn done_message(verb: &str, out: &std::path::Path) -> String {
     let size = std::fs::metadata(out).map(|meta| meta.len()).unwrap_or(0);
     format!("{}: {} ({} bytes)", verb, out.display(), size)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compress_video_args;
+    use std::path::Path;
+
+    fn args(low_cpu: bool) -> Vec<String> {
+        compress_video_args(
+            Path::new("/tmp/in.mp4"),
+            "mp4",
+            30,
+            "slow",
+            low_cpu,
+            Path::new("/tmp/out.mp4"),
+        )
+    }
+
+    #[test]
+    fn low_cpu_pins_ffmpeg_to_one_thread() {
+        let args = args(true);
+        let index = args
+            .iter()
+            .position(|arg| arg == "-threads")
+            .expect("low CPU mode should pass -threads");
+        assert_eq!(args[index + 1], "1");
+    }
+
+    #[test]
+    fn normal_mode_uses_every_thread() {
+        assert!(!args(false).iter().any(|arg| arg == "-threads"));
+    }
+
+    #[test]
+    fn compression_keeps_codec_quality_and_output() {
+        let args = args(false);
+        assert!(args.contains(&"libx264".to_string()));
+        assert!(args.contains(&"30".to_string()));
+        assert!(args.contains(&"slow".to_string()));
+        assert!(args.contains(&"-progress".to_string()));
+        assert!(args.contains(&"pipe:1".to_string()));
+        assert_eq!(args.last().map(String::as_str), Some("/tmp/out.mp4"));
+    }
 }

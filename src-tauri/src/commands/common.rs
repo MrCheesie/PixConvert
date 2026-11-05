@@ -5,9 +5,9 @@
 //! then download a portable build.
 
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -45,6 +45,13 @@ pub struct ProgressPayload {
     pub done: usize,
     pub total: usize,
     pub current: String,
+}
+
+/// Payload for `pixconvert://job-progress` (one file being encoded by ffmpeg).
+#[derive(Debug, Clone, Serialize)]
+pub struct JobProgress {
+    pub path: String,
+    pub percent: f64,
 }
 
 /// Report what is available without triggering any download.
@@ -345,7 +352,7 @@ fn http_client() -> Result<reqwest::blocking::Client, String> {
     // Without timeouts a stalled connection hangs the request (and the window)
     // forever. 30 min total leaves room for a slow 20 MB download.
     reqwest::blocking::Client::builder()
-        .user_agent("PixConvert/0.2.1")
+        .user_agent("PixConvert/0.2.2")
         .connect_timeout(Duration::from_secs(20))
         .timeout(Duration::from_secs(30 * 60))
         .build()
@@ -487,6 +494,148 @@ pub fn run_tool(program: &Path, args: &[String]) -> Result<String, String> {
 pub fn run_tool_named<R: Runtime>(app: &AppHandle<R>, name: &str, args: &[String]) -> Result<String, String> {
     let tool = resolve_tool(app, name)?;
     run_tool(&tool, args)
+}
+
+/// `-progress pipe:1` makes ffmpeg stream timestamps on stdout that
+/// [`progress_fraction`] turns into a percentage.
+pub fn progress_args() -> Vec<String> {
+    vec![
+        "-progress".to_string(),
+        "pipe:1".to_string(),
+        "-nostats".to_string(),
+    ]
+}
+
+/// Percent (0–100) carried by one `-progress` line, if it has a timestamp.
+pub fn progress_fraction(line: &str, duration_secs: Option<f64>) -> Option<f64> {
+    let duration = duration_secs.filter(|d| *d > 0.0)?;
+    let line = line.trim();
+
+    if let Some(raw) = line.strip_prefix("out_time_us=") {
+        let micros: f64 = raw.trim().parse().ok()?;
+        return Some((micros / 1_000_000.0 / duration * 100.0).clamp(0.0, 100.0));
+    }
+    if let Some(raw) = line.strip_prefix("out_time=") {
+        let secs = timestamp_secs(raw.trim())?;
+        return Some((secs / duration * 100.0).clamp(0.0, 100.0));
+    }
+    None
+}
+
+/// `00:01:02.500000` -> 62.5. ffmpeg prints `-577014:32:22.99` before the
+/// first frame; negative timestamps count as zero.
+fn timestamp_secs(value: &str) -> Option<f64> {
+    let mut parts = value.split(':');
+    let hours: f64 = parts.next()?.parse().ok()?;
+    let minutes: f64 = parts.next()?.parse().ok()?;
+    let seconds: f64 = parts.next()?.parse().ok()?;
+    if hours < 0.0 || minutes < 0.0 || seconds < 0.0 {
+        return Some(0.0);
+    }
+    Some(hours * 3600.0 + minutes * 60.0 + seconds)
+}
+
+/// Resolve a tool and run it while forwarding live encode progress.
+pub fn run_tool_named_with_progress<R: Runtime>(
+    app: &AppHandle<R>,
+    name: &str,
+    args: &[String],
+    input: &Path,
+    duration_secs: Option<f64>,
+) -> Result<String, String> {
+    let tool = resolve_tool(app, name)?;
+    run_tool_with_progress(app, &tool, args, input, duration_secs)
+}
+
+/// Run a long tool, emitting `pixconvert://job-progress` as it works.
+///
+/// stderr is drained on its own thread: an encode that chats while we only
+/// read stdout would otherwise fill the pipe and deadlock.
+pub fn run_tool_with_progress<R: Runtime>(
+    app: &AppHandle<R>,
+    program: &Path,
+    args: &[String],
+    input: &Path,
+    duration_secs: Option<f64>,
+) -> Result<String, String> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to run {}: {}", program.display(), e))?;
+
+    let stderr_reader = child.stderr.take().map(|stderr| {
+        std::thread::spawn(move || {
+            let mut text = String::new();
+            let _ = BufReader::new(stderr).read_to_string(&mut text);
+            text
+        })
+    });
+
+    let path = input.display().to_string();
+    let mut sent = -1.0f64;
+    if let Some(stdout) = child.stdout.take() {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            let Some(percent) = progress_fraction(&line, duration_secs) else {
+                continue;
+            };
+            if percent - sent >= 0.5 {
+                sent = percent;
+                emit_job_progress(app, &path, percent);
+            }
+        }
+    }
+
+    let status = child
+        .wait()
+        .map_err(|e| format!("Failed to wait for {}: {}", program.display(), e))?;
+    let stderr = stderr_reader.and_then(|handle| handle.join().ok()).unwrap_or_default();
+
+    if status.success() {
+        emit_job_progress(app, &path, 100.0);
+        return Ok(String::new());
+    }
+
+    let tail: Vec<&str> = stderr.lines().rev().take(12).collect();
+    let tail: Vec<&str> = tail.into_iter().rev().collect();
+    Err(format!(
+        "{} failed ({}): {}",
+        program.display(),
+        status,
+        tail.join("\n")
+    ))
+}
+
+fn emit_job_progress<R: Runtime>(app: &AppHandle<R>, path: &str, percent: f64) {
+    let _ = app.emit(
+        "pixconvert://job-progress",
+        JobProgress {
+            path: path.to_string(),
+            percent,
+        },
+    );
+}
+
+/// Media duration through ffprobe; `None` (indeterminate progress) when the
+/// probe is unavailable, so a missing ffprobe never fails a job.
+pub fn probe_duration<R: Runtime>(app: &AppHandle<R>, path: &Path) -> Option<f64> {
+    let ffprobe = find_ffprobe(app)?;
+    let args = vec![
+        "-v".to_string(),
+        "error".to_string(),
+        "-show_entries".to_string(),
+        "format=duration".to_string(),
+        "-of".to_string(),
+        "default=noprint_wrappers=1:nokey=1".to_string(),
+        path.display().to_string(),
+    ];
+    run_tool(&ffprobe, &args)
+        .ok()?
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|d| *d > 0.0)
 }
 
 // --------------------------------------------------------------- probing ----
@@ -644,4 +793,40 @@ pub fn read_text_file(path: String) -> Result<String, String> {
 pub fn write_text_file(path: String, contents: String) -> Result<String, String> {
     fs::write(&path, contents).map_err(|e| format!("Cannot write {}: {}", path, e))?;
     Ok(format!("Saved {}", path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::progress_fraction;
+
+    fn close(actual: Option<f64>, expected: f64) {
+        let actual = actual.expect("a percentage");
+        assert!(
+            (actual - expected).abs() < 0.001,
+            "expected {}, got {}",
+            expected,
+            actual
+        );
+    }
+
+    #[test]
+    fn reads_microsecond_timestamps() {
+        close(progress_fraction("out_time_us=2500000", Some(10.0)), 25.0);
+        close(progress_fraction("out_time_us=0", Some(10.0)), 0.0);
+    }
+
+    #[test]
+    fn reads_clock_timestamps() {
+        close(progress_fraction("out_time=00:00:02.500000", Some(10.0)), 25.0);
+        close(progress_fraction("out_time=00:01:00.000000", Some(60.0)), 100.0);
+    }
+
+    #[test]
+    fn clamps_and_ignores_noise() {
+        close(progress_fraction("out_time_us=999999999", Some(10.0)), 100.0);
+        assert_eq!(progress_fraction("frame=12", Some(10.0)), None);
+        assert_eq!(progress_fraction("out_time_us=1000", None), None);
+        assert_eq!(progress_fraction("out_time=1000", Some(0.0)), None);
+        close(progress_fraction("out_time=-577014:32:22.99", Some(10.0)), 0.0);
+    }
 }

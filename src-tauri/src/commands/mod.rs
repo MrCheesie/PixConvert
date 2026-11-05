@@ -4,9 +4,12 @@
 //! never touch the input, always write `<stem>_<op>_by_alris.<ext>` next to it.
 
 pub mod audio;
+pub mod bg;
 pub mod common;
 pub mod doc;
+pub mod icns;
 pub mod image;
+pub mod open_with;
 pub mod video;
 
 use std::path::{Path, PathBuf};
@@ -16,6 +19,8 @@ pub const SUFFIX_CONVERT: &str = "converted";
 pub const SUFFIX_COMPRESS: &str = "compressed";
 pub const SUFFIX_EDIT: &str = "edited";
 pub const SUFFIX_VECTORIZE: &str = "vectorized";
+/// Background removal (Apple Vision) writes `<stem>_nobg_by_alris.<ext>`.
+pub const SUFFIX_REMOVE_BG: &str = "nobg";
 
 /// Build `<parent>/<stem>_<op>_by_alris.<ext>` for an input file.
 pub fn output_path(input: &Path, op: &str, ext: &str) -> Result<PathBuf, String> {

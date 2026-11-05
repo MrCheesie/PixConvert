@@ -1,6 +1,7 @@
 /** Phase 4 studio — documents through pandoc, PDF size through ghostscript. */
 
 import { createFormatSelect } from '../../components/FormatSelect';
+import { runWithLoading } from '../../components/LoadingOverlay';
 import { createProgressBar } from '../../components/ProgressBar';
 import { createSubTabs } from '../../components/SubTabs';
 import { createToolStatus } from '../../components/ToolStatus';
@@ -54,7 +55,9 @@ export function createDocStudio(): Studio {
     const path = requireDoc(convertStatus);
     if (!path) return;
     try {
-      const message = await convertDoc(path, convertFormat.getValue());
+      const message = await runWithLoading(`Converting ${baseName(path)}`, () =>
+        convertDoc(path, convertFormat.getValue()),
+      );
       setStatus(convertStatus, message, 'success');
     } catch (error) {
       setStatus(convertStatus, errorMessage(error), 'error');
@@ -65,7 +68,7 @@ export function createDocStudio(): Studio {
     const path = requireDoc(convertStatus);
     if (!path) return;
     try {
-      const message = await docToPdf(path);
+      const message = await runWithLoading(`Building a PDF from ${baseName(path)}`, () => docToPdf(path));
       setStatus(convertStatus, message, 'success');
     } catch (error) {
       setStatus(convertStatus, errorMessage(error), 'error');
@@ -88,7 +91,7 @@ export function createDocStudio(): Studio {
     const path = requireDoc(compressStatus);
     if (!path) return;
     try {
-      const message = await compressDoc(path);
+      const message = await runWithLoading(`Shrinking ${baseName(path)}`, () => compressDoc(path));
       setStatus(compressStatus, message, 'success');
     } catch (error) {
       setStatus(compressStatus, errorMessage(error), 'error');

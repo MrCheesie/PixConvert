@@ -33,7 +33,7 @@ use super::{
 
 /// Formats this module can write natively.
 pub const NATIVE_OUTPUT_FORMATS: &[&str] = &[
-    "png", "jpeg", "webp", "gif", "bmp", "tiff", "ico", "qoi", "avif",
+    "png", "jpeg", "webp", "gif", "bmp", "tiff", "ico", "icns", "qoi", "avif",
 ];
 
 // --------------------------------------------------------------- conversion --
@@ -550,6 +550,9 @@ fn batch_entry(input: &str, outcome: Result<String, String>) -> BatchResult {
 /// Decode with the `image` crate, falling back to ffmpeg for HEIC/JXL/PDF.
 fn decode_any<R: Runtime>(app: &AppHandle<R>, path: &Path) -> Result<DynamicImage, String> {
     let ext = extension_of(path);
+    if ext == "icns" {
+        return super::icns::decode(path);
+    }
     if matches!(ext.as_str(), "heic" | "heif" | "jxl" | "pdf" | "eps") {
         return decode_via_ffmpeg(app, path);
     }
@@ -604,7 +607,7 @@ fn decode_via_ffmpeg<R: Runtime>(app: &AppHandle<R>, path: &Path) -> Result<Dyna
 }
 
 /// Encode to `format`, writing to `out`.
-fn encode_any<R: Runtime>(
+pub(crate) fn encode_any<R: Runtime>(
     app: &AppHandle<R>,
     img: &DynamicImage,
     out: &Path,
@@ -615,6 +618,12 @@ fn encode_any<R: Runtime>(
 
     if matches!(format, "heic" | "heif" | "jxl") {
         return encode_via_ffmpeg(app, img, out, format, quality);
+    }
+
+    // ICNS is a container of PNGs, so it is written in one go.
+    if format == "icns" {
+        let bytes = super::icns::encode(img)?;
+        return fs::write(out, bytes).map_err(|e| format!("Cannot write {}: {}", out.display(), e));
     }
 
     let file = fs::File::create(out).map_err(|e| format!("Cannot create {}: {}", out.display(), e))?;

@@ -51,6 +51,12 @@ export interface ProgressEvent {
   current: string;
 }
 
+/** Live encode percentage for one file (`pixconvert://job-progress`). */
+export interface JobProgressEvent {
+  path: string;
+  percent: number;
+}
+
 export interface ToolDownloadEvent {
   name: string;
   done: number;

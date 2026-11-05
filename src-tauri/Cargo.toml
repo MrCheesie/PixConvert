@@ -1,6 +1,6 @@
 [package]
 name = "pixconvert"
-version = "0.2.1"
+version = "0.2.2"
 description = "PixConvert — local-first image, video, audio and document converter"
 authors = ["Alris Dhanwani"]
 edition = "2021"
@@ -32,6 +32,8 @@ ab_glyph = "0.2"
 # stable API we build against. See agent/docs/audio.md.
 symphonia = { version = "0.5", features = ["all"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+# `.icns` container handling (Apple icon files) — see commands/icns.rs.
+icns = "0.5"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 tar = "0.4"
 flate2 = "1"
@@ -43,6 +45,20 @@ flate2 = "1"
 vtracer = { version = "0.6", optional = true }
 zune-heic = { version = "0.5", optional = true }
 jxl = { version = "0.8", optional = true }
+
+# macOS-only background removal via Apple's Vision framework (no bundled model,
+# no network). See commands/bg.rs.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-core-video = "0.3"
+objc2-vision = { version = "0.3", features = [
+    "VNGenerateForegroundInstanceMaskRequest",
+    "VNObservation",
+    "VNRequestHandler",
+    "VNRequest",
+    "objc2-core-video",
+] }
 
 [dev-dependencies]
 # `test` unlocks tauri::test::mock_app so the command modules can be exercised
